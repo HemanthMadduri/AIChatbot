@@ -14,7 +14,7 @@ app = Flask(__name__)
 CORS(app)
 
 messages = [
-    {"role": "system", "content": "You are a helpful AI assistant. Respond in multiple line if possible."}
+    {"role": "system", "content": "You are a helpful AI assistant. Respond in single line if possible."}
 ]
 
 @app.route("/chat", methods=["POST"])
