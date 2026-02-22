@@ -5,5 +5,5 @@
 const CONFIG = {
   API_URL: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://127.0.0.1:5000'  // Local development
-    : 'https://your-backend-url.onrender.com'  // Production - UPDATE THIS after deploying backend
+    : 'https://ai-chatbot-backend-2tlo.onrender.com'  // Production backend
 };
