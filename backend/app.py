@@ -28,11 +28,25 @@ try:
 except ImportError:
     cv2 = None
 
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+
 load_dotenv()
+
+# Configuration: Choose API provider (groq or ollama)
+API_PROVIDER = os.getenv("API_PROVIDER", "groq").lower()  # Default to Groq for cloud deployment
+
+# Groq Configuration (free cloud API)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")  # Fast and capable
+
+# Ollama Configuration (local installation)
 OLLAMA_URL = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_API_URL = OLLAMA_URL + "/api/generate"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llava")
 
-MODEL = "llava"
 MAX_TOKENS = 512  # lower = faster response
 
 app = Flask(__name__)
@@ -72,20 +86,33 @@ def get_file_extension(filename):
 @app.route("/health", methods=["GET"])
 def health():
     try:
-        response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
-        if response.status_code == 200:
-            models = response.json()
+        if API_PROVIDER == "groq":
+            if not GROQ_API_KEY:
+                return jsonify({
+                    "status": "error",
+                    "message": "GROQ_API_KEY not configured"
+                }), 500
             return jsonify({
                 "status": "ok",
-                "ollama_url": OLLAMA_URL,
-                "models": models
+                "provider": "groq",
+                "model": GROQ_MODEL
             })
-        else:
-            return jsonify({"status": "error", "message": f"Ollama returned {response.status_code}"}), 500
+        else:  # ollama
+            response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+            if response.status_code == 200:
+                models = response.json()
+                return jsonify({
+                    "status": "ok",
+                    "provider": "ollama",
+                    "ollama_url": OLLAMA_URL,
+                    "models": models
+                })
+            else:
+                return jsonify({"status": "error", "message": f"Ollama returned {response.status_code}"}), 500
     except Exception as e:
         return jsonify({
             "status": "error",
-            "message": f"Cannot connect to Ollama at {OLLAMA_URL}: {str(e)}"
+            "message": f"Error: {str(e)}"
         }), 500
 
 def encode_image_to_base64(filepath):
@@ -194,6 +221,45 @@ def extract_text_from_document(filepath):
     except Exception as e:
         return f"[Error reading file: {str(e)}]"
 
+
+def call_groq_api(user_message_content, has_images=False):
+    """Call Groq API for chat completion"""
+    if Groq is None:
+        return "Error: Groq library not installed. Run: pip install groq"
+    
+    if not GROQ_API_KEY:
+        return "Error: GROQ_API_KEY not configured. Get a free API key from https://console.groq.com"
+    
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+        
+        # Note: Groq doesn't support image inputs with text models
+        # For image analysis, you'd need a vision model or describe that images aren't supported
+        if has_images:
+            response_text = "Note: This deployment uses Groq API which doesn't support image analysis. "
+            response_text += "For image/video support, you need to run Ollama locally with llava model. "
+            response_text += f"\n\nRegarding your message: {user_message_content}"
+        else:
+            # Build conversation for Groq
+            groq_messages = []
+            for msg in messages:
+                role = "assistant" if msg["role"] == "assistant" else "user"
+                if msg["role"] == "system":
+                    role = "system"
+                groq_messages.append({"role": role, "content": msg["content"]})
+            
+            chat_completion = client.chat.completions.create(
+                messages=groq_messages,
+                model=GROQ_MODEL,
+                temperature=0.7,
+                max_tokens=MAX_TOKENS * 2,  # Groq is fast, we can afford more tokens
+            )
+            response_text = chat_completion.choices[0].message.content
+        
+        return response_text
+    except Exception as e:
+        return f"Error calling Groq API: {str(e)}"
+
 @app.route("/chat", methods=["POST"])
 def chat():
     try:
@@ -258,6 +324,14 @@ def chat():
 
         messages.append({"role": "user", "content": full_message})
         
+        # Use Groq API if configured, otherwise Ollama
+        if API_PROVIDER == "groq":
+            has_media = bool(image_base64 or video_frames)
+            reply = call_groq_api(full_message, has_images=has_media)
+            messages.append({"role": "assistant", "content": reply})
+            return jsonify({"reply": reply, "files_processed": len(file_info), "provider": "groq"})
+        
+        # Ollama implementation (original code)
         prompt_text = ""
         for msg in messages:
             role = msg["role"].capitalize()
@@ -276,7 +350,7 @@ def chat():
             else:
                 video_prompt += "Give a concise summary."
             payload = {
-                "model": MODEL,
+                "model": OLLAMA_MODEL,
                 "prompt": video_prompt,
                 "images": video_frames,
                 "temperature": 0.7,
@@ -285,7 +359,7 @@ def chat():
             }
         elif image_base64:
             payload = {
-                "model": MODEL,
+                "model": OLLAMA_MODEL,
                 "prompt": f"Please analyze this image and answer: {user_message if user_message else 'What is in this image?'}",
                 "images": [image_base64],
                 "temperature": 0.7,
@@ -294,7 +368,7 @@ def chat():
             }
         else:
             payload = {
-                "model": MODEL,
+                "model": OLLAMA_MODEL,
                 "prompt": prompt_text,
                 "temperature": 0.7,
                 "max_tokens": MAX_TOKENS,
@@ -302,12 +376,12 @@ def chat():
             }
         
         req_timeout = 90 if video_frames else 60
-        print(f"Sending request to {OLLAMA_API_URL} with model {MODEL} stream={use_stream}")
+        print(f"Sending request to {OLLAMA_API_URL} with model {OLLAMA_MODEL} stream={use_stream}")
         
         if use_stream:
             resp = requests.post(OLLAMA_API_URL, json=payload, timeout=req_timeout, stream=True)
             if resp.status_code != 200:
-                reply = f"Error: Ollama returned status {resp.status_code}. Make sure Ollama is running and the '{MODEL}' model is installed."
+                reply = f"Error: Ollama returned status {resp.status_code}. Make sure Ollama is running and the '{OLLAMA_MODEL}' model is installed."
                 messages.append({"role": "assistant", "content": reply})
                 return jsonify({"reply": reply, "files_processed": len(file_info)})
             def generate():
@@ -339,9 +413,9 @@ def chat():
         reply = response.json().get("response", "No response from Ollama")
         if response.status_code != 200:
             print(f"Ollama API Error: {response.status_code} - {response.text}")
-            reply = f"Error: Ollama returned status {response.status_code}. Make sure Ollama is running and the '{MODEL}' model is installed."
+            reply = f"Error: Ollama returned status {response.status_code}. Make sure Ollama is running and the '{OLLAMA_MODEL}' model is installed."
         messages.append({"role": "assistant", "content": reply})
-        return jsonify({"reply": reply, "files_processed": len(file_info)})
+        return jsonify({"reply": reply, "files_processed": len(file_info), "provider": "ollama"})
 
     except Exception as e:
         print(f"Error in /chat: {str(e)}")

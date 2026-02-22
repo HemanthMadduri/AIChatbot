@@ -150,7 +150,7 @@
         formData.append(`file_${index}`, item.file);
       });
 
-      const res = await fetch("http://127.0.0.1:5000/chat", {
+      const res = await fetch(`${CONFIG.API_URL}/chat`, {
         method: "POST",
         body: formData
       });

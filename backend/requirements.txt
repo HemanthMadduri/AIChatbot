@@ -7,3 +7,5 @@ PyPDF2
 python-docx
 python-pptx
 opencv-python-headless
+groq
+gunicorn
