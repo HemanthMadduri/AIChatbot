@@ -315,6 +315,7 @@
     utterance.rate = 0.95;
     utterance.pitch = 1;
     let highlightInterval = null;
+    let boundaryEventFired = false;
     if (segmentSpans.length === 1) {
       segmentSpans[0].classList.add("highlight");
       msgEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -323,6 +324,10 @@
       const startTime = Date.now();
       const estimatedDurationSec = Math.max(1, wordBoundaries.length * 0.32);
       highlightInterval = setInterval(() => {
+        if (boundaryEventFired) {
+          clearInterval(highlightInterval);
+          return;
+        }
         const elapsed = (Date.now() - startTime) / 1000;
         if (elapsed >= estimatedDurationSec || segmentSpans.length === 0) return;
         const wordIndex = Math.min(
@@ -335,8 +340,15 @@
           );
           msgEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
-      }, 120);
+      }, 100);
       utterance.onboundary = (e) => {
+        if (!boundaryEventFired) {
+          boundaryEventFired = true;
+          if (highlightInterval) {
+            clearInterval(highlightInterval);
+            highlightInterval = null;
+          }
+        }
         if (segmentSpans.length === 0 || !wordBoundaries.length) return;
         const charIndex = typeof e.charIndex === "number" ? e.charIndex : e.charLength;
         if (charIndex == null) return;
@@ -538,7 +550,12 @@
     utterance.pitch = 1;
     const startTime = Date.now();
     const estimatedDurationSec = Math.max(1, wordBoundaries.length * 0.32);
-    const highlightInterval = setInterval(() => {
+    let boundaryEventFired = false;
+    let highlightInterval = setInterval(() => {
+      if (boundaryEventFired) {
+        clearInterval(highlightInterval);
+        return;
+      }
       const elapsed = (Date.now() - startTime) / 1000;
       if (elapsed >= estimatedDurationSec || wordSpans.length === 0) return;
       const wordIndex = Math.min(
@@ -551,8 +568,15 @@
         );
         messageElement?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
-    }, 120);
+    }, 100);
     utterance.onboundary = (e) => {
+      if (!boundaryEventFired) {
+        boundaryEventFired = true;
+        if (highlightInterval) {
+          clearInterval(highlightInterval);
+          highlightInterval = null;
+        }
+      }
       if (wordSpans.length === 0 || wordBoundaries.length === 0) return;
       const charIndex = typeof e.charIndex === "number" ? e.charIndex : e.charLength;
       if (charIndex == null) return;
